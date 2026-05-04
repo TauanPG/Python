@@ -1,36 +1,45 @@
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import messagebox, filedialog
 import os
 import subprocess
 
-# ===================== CORES (TEMA ESCURO) =====================
+# ===================== CORES & ESTILO =====================
 BG_COLOR = "#1e1e1e"
 FG_COLOR = "#ffffff"
 ENTRY_BG = "#2d2d2d"
 BTN_BG = "#3c3f41"
 BTN_ACTIVE = "#505354"
+ACCENT_COLOR = "#4caf50"
+
 
 # ===================== FUNÇÕES =====================
 
+def selecionar_pasta(entrada):
+    caminho = filedialog.askdirectory()
+    if caminho:
+        entrada.delete(0, tk.END)
+        entrada.insert(0, caminho)
+
+
 def carregar_caminhos():
     try:
-        with open("caminho.txt", encoding="utf-8-sig") as arquivo:
-            linhas = arquivo.readlines()
+        # Busca o arquivo no mesmo diretório do script
+        caminho_txt = os.path.join(os.path.dirname(__file__), "caminho.txt")
+        if not os.path.exists(caminho_txt):
+            return  # Apenas ignora se não existir no início
 
-        if len(linhas) < 2:
-            messagebox.showerror("Erro", "Arquivo caminho.txt inválido!")
-            return
+        with open(caminho_txt, "r", encoding="utf-8-sig") as arquivo:
+            linhas = [linha.strip() for linha in arquivo.readlines()]
 
-        entrada_origem.delete(0, tk.END)
-        entrada_destino.delete(0, tk.END)
-
-        entrada_origem.insert(0, linhas[0].strip())
-        entrada_destino.insert(0, linhas[1].strip())
-
-        status_label.config(text="Caminhos carregados com sucesso!", fg="#4caf50")
+        if len(linhas) >= 2:
+            entrada_origem.delete(0, tk.END)
+            entrada_destino.delete(0, tk.END)
+            entrada_origem.insert(0, linhas[0])
+            entrada_destino.insert(0, linhas[1])
+            status_label.config(text="Caminhos carregados!", fg=ACCENT_COLOR)
 
     except Exception as e:
-        messagebox.showerror("Erro", f"Erro ao ler arquivo:\n{e}")
+        messagebox.showerror("Erro", f"Erro ao carregar configurações:\n{e}")
 
 
 def salvar():
@@ -38,12 +47,11 @@ def salvar():
         origem = entrada_origem.get().strip()
         destino = entrada_destino.get().strip()
 
-        with open("caminho.txt", "w", encoding="utf-8") as arquivo:
-            arquivo.write(origem + "\n")
-            arquivo.write(destino + "\n")
+        caminho_txt = os.path.join(os.path.dirname(__file__), "caminho.txt")
+        with open(caminho_txt, "w", encoding="utf-8") as arquivo:
+            arquivo.write(f"{origem}\n{destino}")
 
-        status_label.config(text="Caminhos salvos!", fg="#4caf50")
-
+        status_label.config(text="Configurações salvas!", fg=ACCENT_COLOR)
     except Exception as e:
         messagebox.showerror("Erro", str(e))
 
@@ -56,139 +64,82 @@ def executar_backup():
         messagebox.showwarning("Atenção", "Preencha origem e destino!")
         return
 
-    # validação real do caminho
     if not os.path.exists(origem):
-        messagebox.showerror("Erro", "Pasta de origem não existe!")
-        status_label.config(text="Erro no backup!", fg="red")
+        messagebox.showerror("Erro", "Pasta de origem não encontrada!")
         return
 
     try:
-        comando = ["robocopy", origem, destino, "/MIR"]
+        status_label.config(text="Backup em andamento...", fg="yellow")
+        janela.update_idletasks()  # Atualiza a interface antes de travar no subprocess
 
-        resultado = subprocess.run(comando, capture_output=True, text=True)
+        # /R:0 /W:0 evita que o robocopy fique travado tentando copiar arquivos em uso
+        comando = ["robocopy", origem, destino, "/MIR", "/R:0", "/W:0"]
 
-        saida = (resultado.stdout + resultado.stderr).lower()
+        # CREATE_NO_WINDOW = 0x08000000 (Oculta o console no Windows)
+        resultado = subprocess.run(comando, capture_output=True, text=True, creationflags=0x08000000)
 
-        # detecta erros reais na saída
-        erro_real = (
-            "error" in saida or
-            "falha" in saida or
-            "invalid" in saida or
-            "não pode" in saida
-        )
-
-        # robocopy: 0–7 = OK
-        if resultado.returncode <= 7 and not erro_real:
-            status_label.config(text="Backup concluído!", fg="#4caf50")
+        # Robocopy codes < 8 são sucessos (8+ indicam falhas críticas)
+        if resultado.returncode < 8:
+            status_label.config(text="Backup concluído com sucesso!", fg=ACCENT_COLOR)
         else:
-            status_label.config(text="Erro no backup!", fg="red")
-            messagebox.showerror("Erro no backup", resultado.stdout + "\n" + resultado.stderr)
+            status_label.config(text="Erro crítico no Robocopy!", fg="red")
+            messagebox.showerror("Erro", resultado.stdout)
 
     except Exception as e:
-        messagebox.showerror("Erro", str(e))
+        messagebox.showerror("Erro", f"Falha na execução:\n{e}")
 
 
-# ===================== JANELA =====================
-
+# ===================== JANELA PRINCIPAL =====================
 janela = tk.Tk()
-janela.title("Backup Automatizado")
-janela.geometry("520x280")
+janela.title("Backup Robocopy UI")
+janela.geometry("550x320")
 janela.configure(bg=BG_COLOR)
 
-# ===================== TÍTULO =====================
+# Título
+tk.Label(janela, text="Backup Automatizado", bg=BG_COLOR, fg=FG_COLOR, font=("Arial", 14, "bold")).pack(pady=15)
 
-titulo = tk.Label(
-    janela,
-    text="Backup Automatizado",
-    bg=BG_COLOR,
-    fg=FG_COLOR,
-    font=("Arial", 14, "bold")
-)
-titulo.pack(pady=10)
 
-# ===================== ORIGEM =====================
+# Container para campos
+def criar_campo(label_text, var_name):
+    frame = tk.Frame(janela, bg=BG_COLOR)
+    frame.pack(fill="x", padx=40, pady=5)
 
-tk.Label(janela, text="Origem:", bg=BG_COLOR, fg=FG_COLOR).pack(anchor="w", padx=60)
+    tk.Label(frame, text=label_text, bg=BG_COLOR, fg=FG_COLOR).pack(side="left")
 
-entrada_origem = tk.Entry(
-    janela,
-    width=65,
-    bg=ENTRY_BG,
-    fg=FG_COLOR,
-    insertbackground=FG_COLOR,
-    relief="flat",
-    justify="left"
-)
-entrada_origem.pack(pady=5)
+    btn_dir = tk.Button(frame, text="📁", command=lambda: selecionar_pasta(var_name),
+                        bg=BTN_BG, fg=FG_COLOR, relief="flat", padx=5)
+    btn_dir.pack(side="right", padx=5)
 
-# ===================== DESTINO =====================
+    entry = tk.Entry(frame, bg=ENTRY_BG, fg=FG_COLOR, insertbackground=FG_COLOR, relief="flat")
+    entry.pack(side="right", fill="x", expand=True)
+    return entry
 
-tk.Label(janela, text="Destino:", bg=BG_COLOR, fg=FG_COLOR).pack(anchor="w", padx=60)
 
-entrada_destino = tk.Entry(
-    janela,
-    width=65,
-    bg=ENTRY_BG,
-    fg=FG_COLOR,
-    insertbackground=FG_COLOR,
-    relief="flat"
-)
-entrada_destino.pack(pady=5)
+entrada_origem = criar_campo("Origem: ", None)
+entrada_destino = criar_campo("Destino: ", None)
 
-# ===================== BOTÕES =====================
+# Atribui o comando de seleção após criar os objetos
+entrada_origem.master.children['!button'].config(command=lambda: selecionar_pasta(entrada_origem))
+entrada_destino.master.children['!button'].config(command=lambda: selecionar_pasta(entrada_destino))
 
+# Botões
 frame_botoes = tk.Frame(janela, bg=BG_COLOR)
-frame_botoes.pack(pady=15)
+frame_botoes.pack(pady=20)
 
-btn_carregar = tk.Button(
-    frame_botoes,
-    text="Carregar caminhos",
-    command=carregar_caminhos,
-    bg=BTN_BG,
-    fg=FG_COLOR,
-    activebackground=BTN_ACTIVE,
-    relief="flat",
-    padx=5,
-    pady=5
-)
-btn_carregar.grid(row=0, column=0, padx=10)
+botoes_info = [
+    ("Carregar", carregar_caminhos),
+    ("Salvar", salvar),
+    ("Executar Backup", executar_backup)
+]
 
-btn_salvar = tk.Button(
-    frame_botoes,
-    text="Salvar",
-    command=salvar,
-    bg=BTN_BG,
-    fg=FG_COLOR,
-    activebackground=BTN_ACTIVE,
-    relief="flat",
-    padx=10,
-    pady=5
-)
-btn_salvar.grid(row=0, column=1, padx=10)
+for texto, comando in botoes_info:
+    tk.Button(frame_botoes, text=texto, command=comando, bg=BTN_BG, fg=FG_COLOR,
+              activebackground=BTN_ACTIVE, relief="flat", padx=15, pady=5).pack(side="left", padx=5)
 
-btn_backup = tk.Button(
-    frame_botoes,
-    text="Executar Backup",
-    command=executar_backup,
-    bg=BTN_BG,
-    fg=FG_COLOR,
-    activebackground=BTN_ACTIVE,
-    relief="flat",
-    padx=10,
-    pady=5
-)
-btn_backup.grid(row=0, column=2, padx=10)
+status_label = tk.Label(janela, text="Pronto", bg=BG_COLOR, fg=FG_COLOR)
+status_label.pack()
 
-# ===================== STATUS =====================
-
-status_label = tk.Label(
-    janela,
-    text="",
-    bg=BG_COLOR,
-    fg=FG_COLOR
-)
-status_label.pack(pady=10)
-
-# ===================== LOOP =====================
+# Tentar carregar ao iniciar
+carregar_caminhos()
 
 janela.mainloop()
